@@ -47,11 +47,33 @@ STATE_DIR=/tmp/test NTFY_TOPIC=your-topic python check.py
 ## Known limitations
 
 - **GitHub cron is not punctual.** Scheduled runs are often delayed by 5–30 minutes or more, and some are skipped under load. Since the list is typically open for only 10-15 minutes, it can open and close between two runs and you would miss it. Repeating alerts only help once a run has actually seen the list open.
-- If that delay is a problem, run the same `check.py` on a Raspberry Pi (or any always-on machine) with a cron job every minute:
+- If that delay is a problem, use the free external scheduler described below, or run the same `check.py` on a Raspberry Pi (or any always-on machine) with a cron job every minute:
   ```
   * * * * * cd /path/to/repo && NTFY_TOPIC=your-topic .venv/bin/python check.py
   ```
 - Only the two text markers are checked. If the site rewords them, the sanity check or the status logic may stop matching; the former fails loudly, but a reworded "closed" message would look like `open`. Treat an unexpected "open" alert with a quick look at the page.
+
+## Faster checks with a free external scheduler (optional)
+
+GitHub's own `schedule` trigger is slow and unreliable, but runs started through the API (`workflow_dispatch`) normally start within seconds. A free service can call that API every 1-2 minutes. A run takes about 40 seconds, and the `concurrency` group in `check.yml` prevents overlapping runs. Keep the built-in 5-minute schedule as a backup.
+
+1. **Create a token.** GitHub → Settings → Developer settings → Personal access tokens → *Fine-grained tokens* → Generate new token.
+   - Repository access: *Only select repositories* → this repo.
+   - Repository permissions: **Actions: Read and write** (nothing else).
+   - Set the longest expiry you are comfortable with and note the date; the scheduler stops working when the token expires.
+2. **Create a job on [cron-job.org](https://cron-job.org)** (free account):
+   - URL: `https://api.github.com/repos/<owner>/<repo>/actions/workflows/check.yml/dispatches`
+   - Schedule: every 1 or 2 minutes.
+   - Advanced → Request method: `POST`
+   - Advanced → Headers:
+     - `Authorization: Bearer <your token>`
+     - `Accept: application/vnd.github+json`
+     - `X-GitHub-Api-Version: 2022-11-28`
+   - Advanced → Request body: `{"ref":"main"}`
+   - Enable failure notifications in the job settings.
+3. A successful call returns HTTP **204** and a new run appears in the Actions tab.
+
+The token only lives in the scheduler's settings, never in this repo. It can only trigger workflow runs here, so revoke it from GitHub's token settings if you ever think it leaked.
 
 ## Keeping the schedule alive
 

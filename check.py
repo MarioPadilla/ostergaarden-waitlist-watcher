@@ -52,11 +52,11 @@ def notify(topic: str, status: str, test: bool) -> None:
     else:
         headers = {"Title": "Østergården"}
         message = prefix + "Ekstern venteliste closed again"
-    # HTTP headers must be latin-1; "Østergården" is fine
+    # ntfy reads header values as UTF-8 (the default would send latin-1 and garble "Ø")
     resp = requests.post(
         f"https://ntfy.sh/{topic}",
         data=message.encode("utf-8"),
-        headers={k: v.encode("latin-1") for k, v in headers.items()},
+        headers={k: v.encode("utf-8") for k, v in headers.items()},
         timeout=30,
     )
     resp.raise_for_status()

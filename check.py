@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -14,6 +15,10 @@ from playwright.sync_api import sync_playwright
 URL = "https://findbolig.nu/da-dk/udlejere/oestergaarden/ekstern-venteliste"
 PAGE_MARKER = "ekstern venteliste"  # must be present, otherwise the page did not render
 CLOSED_MARKER = "lukket for opskrivning"
+
+BURST_COUNT = 3        # messages sent in a row when the list first opens
+BURST_GAP_SECONDS = 5  # pause between them so the phone sounds each one
+MAX_REMINDERS = 5      # extra alerts on later runs while the list stays open
 
 # STATE_DIR lets tests run against a throwaway directory
 BASE = Path(os.environ.get("STATE_DIR", Path(__file__).parent))
@@ -43,12 +48,12 @@ def fetch_page_text() -> str:
             browser.close()
 
 
-def notify(topic: str, status: str, test: bool) -> None:
+def notify(topic: str, status: str, test: bool, note: str = "") -> None:
     """Send the ntfy message for the new status; raises on failure."""
     prefix = "[TEST] " if test else ""
     if status == "open":
         headers = {"Title": "Østergården", "Priority": "urgent", "Click": URL}
-        message = prefix + "Ekstern venteliste is OPEN - sign up now!"
+        message = prefix + "Ekstern venteliste is OPEN - sign up now!" + note
     else:
         headers = {"Title": "Østergården"}
         message = prefix + "Ekstern venteliste closed again"
@@ -60,6 +65,33 @@ def notify(topic: str, status: str, test: bool) -> None:
         timeout=30,
     )
     resp.raise_for_status()
+
+
+def read_state() -> tuple[str, int]:
+    """Return (status, reminders_sent). state.txt: line 1 status, optional line 2 count."""
+    if not STATE_FILE.exists():
+        return "unknown", 0
+    lines = STATE_FILE.read_text().split()
+    count = int(lines[1]) if len(lines) > 1 and lines[1].isdigit() else 0
+    return (lines[0] if lines else "unknown"), count
+
+
+def write_state(status: str, reminders: int = 0) -> None:
+    STATE_FILE.write_text(f"{status}\n{reminders}\n")
+
+
+def notify_burst(topic: str) -> None:
+    """Open alert sent several times a few seconds apart; only the first must succeed."""
+    for i in range(1, BURST_COUNT + 1):
+        note = f" ({i}/{BURST_COUNT})"
+        if i == 1:
+            notify(topic, "open", test=False, note=note)  # raises -> state not updated -> retried
+        else:
+            time.sleep(BURST_GAP_SECONDS)
+            try:
+                notify(topic, "open", test=False, note=note)
+            except requests.RequestException as e:
+                print(f"WARNING: burst message {i} failed: {e}")
 
 
 def append_history(status: str) -> None:
@@ -97,24 +129,33 @@ def main() -> None:
     status = "closed" if CLOSED_MARKER in text else "open"
     print(f"Detected status: {status}")
 
-    previous = STATE_FILE.read_text().strip() if STATE_FILE.exists() else "unknown"
-    print(f"Previous status: {previous}")
+    previous, reminders = read_state()
+    print(f"Previous status: {previous} (reminders sent: {reminders})")
 
     if status == previous:
-        print("No change.")
+        # Still open: repeat the alert a limited number of times in case it was missed
+        if status == "open" and reminders < MAX_REMINDERS:
+            n = reminders + 1
+            notify(topic, "open", test=False, note=f" (still open, reminder {n}/{MAX_REMINDERS})")
+            write_state(status, n)
+            print(f"Reminder {n}/{MAX_REMINDERS} sent.")
+        else:
+            print("No change.")
         return
 
     # First-ever run finding 'closed' is not news
     if previous == "unknown" and status == "closed":
         print("First run and closed: no notification.")
+    elif status == "open":
+        notify_burst(topic)
+        print("Open notifications sent.")
     else:
         notify(topic, status, test=False)  # raises on failure -> state not updated -> retried
         print("Notification sent.")
 
-    STATE_FILE.write_text(status + "\n")
+    write_state(status)
     append_history(status)
     print(f"State updated to '{status}' and logged to {HISTORY_FILE.name}.")
-
 
 if __name__ == "__main__":
     main()

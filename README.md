@@ -13,6 +13,8 @@ Watches the [Østergården external waiting list page](https://findbolig.nu/da-d
   2. then writes `state.txt` (so a failed notification is retried on the next run),
   3. then appends a row to `history.csv`.
 - The first-ever run does not notify if the status is `closed`; it does if it is `open`.
+- **The list is only open briefly.** The landlord says it typically closes again after 10-15 minutes, so the alert is repeated to make sure you see it: when the list first opens you get 3 urgent messages 5 seconds apart, and then one reminder on each following run (up to 5) while it stays open. Reminders are not logged in `history.csv`. Tune `BURST_COUNT`, `BURST_GAP_SECONDS` and `MAX_REMINDERS` at the top of `check.py`.
+- `state.txt` holds the status on line 1 and the number of reminders sent on line 2.
 - The workflow commits `state.txt` and `history.csv` back to the repo when they change.
 
 ## Setup (if you fork this)
@@ -44,7 +46,7 @@ STATE_DIR=/tmp/test NTFY_TOPIC=your-topic python check.py
 
 ## Known limitations
 
-- **GitHub cron is not punctual.** Scheduled runs are often delayed by 5–30 minutes or more, and some are skipped under load. If the list is open for only a few hours, you may be notified late.
+- **GitHub cron is not punctual.** Scheduled runs are often delayed by 5–30 minutes or more, and some are skipped under load. Since the list is typically open for only 10-15 minutes, it can open and close between two runs and you would miss it. Repeating alerts only help once a run has actually seen the list open.
 - If that delay is a problem, run the same `check.py` on a Raspberry Pi (or any always-on machine) with a cron job every minute:
   ```
   * * * * * cd /path/to/repo && NTFY_TOPIC=your-topic .venv/bin/python check.py
@@ -66,7 +68,7 @@ timestamp_utc,timestamp_copenhagen,status
 2026-11-03T11:47:05Z,2026-11-03T12:47:05+0100,closed
 ```
 
-The list was open from 09:12 to 12:47 Copenhagen time that day, about 3.5 hours. Timestamps are when a check *noticed* the change, so they can lag the real event by the cron delay.
+The list was open from 09:12 to 12:47 Copenhagen time that day, about 3.5 hours (in practice it is usually much shorter). Timestamps are when a check *noticed* the change, so they can lag the real event by the cron delay.
 
 ## Terms of use
 

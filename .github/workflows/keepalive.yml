@@ -1,0 +1,35 @@
+name: Keepalive
+
+# GitHub disables scheduled workflows in public repos after 60 days without
+# repo activity. Status commits count as activity, but the list can stay
+# closed for months, so make an empty commit if the last one is >30 days old.
+on:
+  schedule:
+    - cron: "17 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: check
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Empty commit if last commit is older than 30 days
+        run: |
+          last=$(git log -1 --format=%ct)
+          age_days=$(( ($(date +%s) - last) / 86400 ))
+          echo "Last commit is $age_days days old."
+          if [ "$age_days" -gt 30 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "keepalive"
+            git push
+          fi
